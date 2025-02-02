@@ -35,8 +35,17 @@ def semantic_search(index: VectorStoreIndex, query: str, top_k: int = 3) -> List
     # Return the text content and metadata of each node
     results = []
     for node in nodes:
-        thread_id = node.metadata.get("thread_id", "Unknown")
-        results.append(f"Thread ID: {thread_id}\n{node.text}\n")
+        thread_ts = node.metadata.get("thread_ts", "Unknown")
+        channel_id = node.metadata.get("channel_id", "Unknown")
+        participant_count = node.metadata.get("participant_count", 0)
+        
+        metadata_info = (
+            f"Thread: {thread_ts}\n"
+            f"Channel: {channel_id}\n"
+            f"Participants: {participant_count}\n"
+            "---\n"
+        )
+        results.append(f"{metadata_info}{node.text}\n")
     
     return results
 

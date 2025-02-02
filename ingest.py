@@ -12,37 +12,39 @@ load_dotenv()
 
 def get_db_connection():
     """Create database connection"""
-    engine = create_engine("sqlite:///slack_messages.db")
+    engine = create_engine("sqlite:///conversations.db")
     return engine.connect()
 
 def fetch_conversations() -> List[Document]:
     """Fetch all conversations from SQLite and convert them to Documents"""
     conn = get_db_connection()
-    
+
     # Fetch all conversations
     query = text("""
-        SELECT thread_id, thread_content 
+        SELECT thread_ts, content, participant_count, channel_id 
         FROM conversations 
-        WHERE thread_content IS NOT NULL
+        WHERE content IS NOT NULL
     """)
-    
+
     result = conn.execute(query)
     documents = []
-    
+
     for row in result:
-        thread_id, content = row
+        thread_ts, content, participant_count, channel_id = row
         if content:
             # Create a Document with metadata for each conversation
             doc = Document(
                 text=content,
                 metadata={
-                    "thread_id": thread_id,
-                    "source": "slack_conversation"
+                    "thread_ts": thread_ts,
+                    "source": "slack_conversation",
+                    "participant_count": participant_count,
+                    "channel_id": channel_id
                 },
-                id_=f"thread_{thread_id}"  # Deterministic ID for caching
+                id_=f"thread_{thread_ts}"  # Deterministic ID for caching
             )
             documents.append(doc)
-    
+
     conn.close()
     return documents
 
@@ -68,26 +70,26 @@ def setup_ingestion_pipeline():
         # Handle document updates
         docstore_strategy=DocstoreStrategy.UPSERTS,
     )
-    
+
     return pipeline
 
 def main():
     """Main ingestion pipeline"""
     print("Starting ingestion pipeline...")
-    
+
     # Set up ingestion pipeline
     pipeline = setup_ingestion_pipeline()
-    
+
     # Fetch documents
     print("Fetching conversations from database...")
     documents = fetch_conversations()
     print(f"Found {len(documents)} conversations")
-    
+
     # Run ingestion pipeline
     print("Running ingestion pipeline...")
     nodes = pipeline.run(documents=documents)
     print(f"Ingested {len(nodes)} nodes")
-    
+
     print("Ingestion complete!")
 
 if __name__ == "__main__":

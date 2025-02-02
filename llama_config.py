@@ -27,6 +27,7 @@ REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}"
 def get_embedding_model():
     """Get Azure OpenAI embedding model"""
     return AzureOpenAIEmbedding(
+        deployment_name=AZURE_OPENAI_DEPLOYMENT,
         model=AZURE_OPENAI_DEPLOYMENT,
         api_key=AZURE_OPENAI_API_KEY,
         azure_endpoint=AZURE_OPENAI_ENDPOINT,
@@ -37,7 +38,8 @@ def get_embedding_model():
 def get_llm_model():
     """Get Azure OpenAI LLM model"""
     return AzureOpenAI(
-        model=AZURE_OPENAI_LLM_DEPLOYMENT,
+        deployment_name=AZURE_OPENAI_LLM_DEPLOYMENT,
+        model="gpt-4o",
         api_key=AZURE_OPENAI_API_KEY,
         azure_endpoint=AZURE_OPENAI_ENDPOINT,
         api_version=AZURE_LLM_API_VERSION,
