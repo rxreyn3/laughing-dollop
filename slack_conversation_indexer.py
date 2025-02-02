@@ -130,7 +130,7 @@ def update_conversation_index():
                 result = make_api_call_with_retry(
                     client.conversations_history,
                     channel=channel_id,
-                    oldest=f"{time.time() - 86400 * 5:.6f}",  # Last 10 days, formatted as "1234567890.123456"
+                    oldest=f"{time.time() - 86400 * 14:.6f}",  # Last 10 days, formatted as "1234567890.123456"
                 )
                 if result is None:
                     print(
