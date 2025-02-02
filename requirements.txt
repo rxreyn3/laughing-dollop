@@ -1,0 +1,8 @@
+slack-sdk
+python-dotenv
+sqlalchemy
+blake3
+schedule
+tqdm
+llama-index-core
+openai
