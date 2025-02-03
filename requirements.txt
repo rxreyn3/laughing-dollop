@@ -10,4 +10,6 @@ llama-index-vector-stores-redis
 llama-index-storage-docstore-redis
 llama-index-llms-azure-openai
 llama-index-embeddings-azure-openai
+llama-index-postprocessor-flag-embedding-reranker
 redis
+colorlog

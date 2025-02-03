@@ -1,10 +1,11 @@
 import os
+
 from dotenv import load_dotenv
 from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
 from llama_index.llms.azure_openai import AzureOpenAI
-from llama_index.vector_stores.redis import RedisVectorStore
 from llama_index.storage.docstore.redis import RedisDocumentStore
 from llama_index.storage.kvstore.redis import RedisKVStore
+from llama_index.vector_stores.redis import RedisVectorStore
 from redisvl.schema import IndexSchema
 
 # Load environment variables
@@ -13,7 +14,7 @@ load_dotenv()
 # Azure OpenAI Configuration
 AZURE_OPENAI_API_KEY = os.getenv("AZURE_OPENAI_API_KEY")
 AZURE_OPENAI_ENDPOINT = os.getenv("AZURE_OPENAI_ENDPOINT")
-AZURE_OPENAI_DEPLOYMENT = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
 AZURE_OPENAI_LLM_DEPLOYMENT = os.getenv("AZURE_OPENAI_LLM_DEPLOYMENT")
 AZURE_EMBEDDING_API_VERSION = os.getenv("AZURE_EMBEDDING_API_VERSION", "2023-05-15")
 AZURE_LLM_API_VERSION = os.getenv("AZURE_LLM_API_VERSION", "2023-05-15")
@@ -27,8 +28,8 @@ REDIS_URL = f"redis://{REDIS_HOST}:{REDIS_PORT}"
 def get_embedding_model():
     """Get Azure OpenAI embedding model"""
     return AzureOpenAIEmbedding(
-        deployment_name=AZURE_OPENAI_DEPLOYMENT,
-        model=AZURE_OPENAI_DEPLOYMENT,
+        deployment_name=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
+        model=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
         api_key=AZURE_OPENAI_API_KEY,
         azure_endpoint=AZURE_OPENAI_ENDPOINT,
         api_version=AZURE_EMBEDDING_API_VERSION,

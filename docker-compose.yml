@@ -9,6 +9,35 @@ services:
       - redis_data:/data
     environment:
       - REDIS_ARGS="--save 60 1"  # Save every 60 seconds if at least 1 change
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 3
+
+  query-interface:
+    build: .
+    volumes:
+      - ./conversations.db:/app/data/conversations.db  # Mount local DB file
+      - .env:/app/.env:ro
+    ports:
+      - "5000:5000"  # If we want to add a web interface later
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["python", "query.py"]
+    restart: unless-stopped
+
+  slack-reader:
+    build: .
+    volumes:
+      - ./conversations.db:/app/data/conversations.db  # Mount local DB file
+      - .env:/app/.env:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    command: ["python", "slack_conversation_indexer.py", "--mode", "continuous"]
+    restart: unless-stopped
 
 volumes:
   redis_data:

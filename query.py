@@ -1,133 +1,290 @@
 from typing import List
+
 from llama_index.core import VectorStoreIndex, Settings
+from llama_index.core.schema import QueryBundle
+from llama_index.postprocessor.flag_embedding_reranker import (
+    FlagEmbeddingReranker,
+)
+
 import llama_config as config
+from log_config import setup_logger
+
+# Set up logger
+logger = setup_logger(__name__)
+
 
 def setup_llamaindex():
     """Configure LlamaIndex with Azure OpenAI and Redis"""
     # Initialize models
+    logger.info("Initializing LlamaIndex components...")
     embed_model = config.get_embedding_model()
     llm = config.get_llm_model()
-    
+
     # Set up stores
     vector_store = config.get_vector_store()
     docstore = config.get_document_store()
-    
+
     # Configure global settings
     Settings.embed_model = embed_model
     Settings.llm = llm
-    
+
     # Create index from existing vector store
+    logger.info("Creating index from vector store...")
     index = VectorStoreIndex.from_vector_store(
         vector_store,
         docstore=docstore,
     )
-    
+
     return index
 
+
 def semantic_search(index: VectorStoreIndex, query: str, top_k: int = 3) -> List[str]:
-    """Perform semantic search on conversations"""
-    # Create retriever from index
-    retriever = index.as_retriever(similarity_top_k=top_k)
+    """
+    Perform semantic search on conversations with reranking.
     
-    # Retrieve similar nodes
+    Args:
+        index: The vector store index
+        query: Search query
+        top_k: Number of results to return
+        
+    Returns:
+        List of relevant conversation snippets
+    """
+    logger.info(f"Performing semantic search for: {query}")
+    
+    # Create retriever from index with higher initial top_k
+    retriever = index.as_retriever(
+        similarity_top_k=top_k * 3
+    )  # Get more candidates for reranking
+
+    # Create reranker
+    reranker = FlagEmbeddingReranker(
+        top_n=top_k,  # Final number of results
+        model="BAAI/bge-reranker-large",
+    )
+
+    # Create query bundle and retrieve nodes
+    query_bundle = QueryBundle(query_str=query)
     nodes = retriever.retrieve(query)
     
-    # Return the text content and metadata of each node
+    logger.info(f"Retrieved {len(nodes)} initial candidates")
+    reranked_nodes = reranker.postprocess_nodes(nodes, query_bundle)
+    logger.info(f"Reranked to top {len(reranked_nodes)} results")
+
+    # Return the text content and metadata of each reranked node
     results = []
-    for node in nodes:
+    for node in reranked_nodes:
         thread_ts = node.metadata.get("thread_ts", "Unknown")
         channel_id = node.metadata.get("channel_id", "Unknown")
         participant_count = node.metadata.get("participant_count", 0)
-        
+        score = node.score if hasattr(node, "score") else "N/A"
+        # Add relevance interpretation
+        if score != "N/A":
+            if score > 5:
+                relevance = "Very High Relevance"
+            elif score > 1:
+                relevance = "High Relevance"
+            elif score > 0:
+                relevance = "Moderate Relevance"
+            elif score > -1:
+                relevance = "Low Relevance"
+            else:
+                relevance = "Not Relevant"
+            score_info = f"Relevance Score: {score:.2f} ({relevance})"
+        else:
+            score_info = "Relevance Score: N/A"
+
         metadata_info = (
             f"Thread: {thread_ts}\n"
             f"Channel: {channel_id}\n"
             f"Participants: {participant_count}\n"
+            f"{score_info}\n"
             "---\n"
         )
         results.append(f"{metadata_info}{node.text}\n")
-    
+
     return results
 
+
 def ask_question(index: VectorStoreIndex, question: str) -> str:
-    """Ask a question and get an answer based on the conversation context"""
-    # Create query engine with response synthesis
+    """
+    Ask a question and get an answer based on the conversation context.
+    
+    Args:
+        index: The vector store index
+        question: The question to answer
+        
+    Returns:
+        Generated answer
+    """
+    logger.info(f"Processing question: {question}")
+    
+    # Create reranker
+    reranker = FlagEmbeddingReranker(
+        top_n=5,  # Keep top 5 most relevant chunks for context
+        model="BAAI/bge-reranker-large",
+    )
+
+    # Create query engine with reranked nodes
     query_engine = index.as_query_engine(
+        node_postprocessors=[reranker],
         response_mode="compact",
         streaming=True,
+        similarity_top_k=20,  # Get more candidates for reranking
     )
-    
+
     # Get response
     response = query_engine.query(question)
-    
-    return str(response)
+
+    # Add source information with relevance scores
+    source_info = "\n\nSources (with relevance scores):\n"
+
+    # Get the nodes used in generating the response
+    retriever = index.as_retriever(similarity_top_k=20)
+    query_bundle = QueryBundle(query_str=question)
+    nodes = retriever.retrieve(question)
+    reranked_nodes = reranker.postprocess_nodes(nodes, query_bundle)
+
+    for node in reranked_nodes:
+        score = node.score if hasattr(node, "score") else "N/A"
+        if score != "N/A":
+            if score > 5:
+                relevance = "Very High Relevance"
+            elif score > 1:
+                relevance = "High Relevance"
+            elif score > 0:
+                relevance = "Moderate Relevance"
+            elif score > -1:
+                relevance = "Low Relevance"
+            else:
+                relevance = "Not Relevant"
+            source_info += f"\n- Thread {node.metadata.get('thread_ts', 'Unknown')}: Score {score:.2f} ({relevance})"
+        else:
+            source_info += (
+                f"\n- Thread {node.metadata.get('thread_ts', 'Unknown')}: Score N/A"
+            )
+
+    return str(response) + source_info
+
 
 def generate_howto(index: VectorStoreIndex, topic: str) -> str:
-    """Generate a how-to document based on conversation context"""
-    # Create query engine with structured output
+    """
+    Generate a how-to document based on conversation context.
+    
+    Args:
+        index: The vector store index
+        topic: The topic to generate a how-to for
+        
+    Returns:
+        Generated how-to document
+    """
+    logger.info(f"Generating how-to document for: {topic}")
+    
+    # Create retriever with higher initial top_k for reranking
+    retriever = index.as_retriever(
+        similarity_top_k=30
+    )  # Get more candidates for reranking
+
+    # Create reranker
+    reranker = FlagEmbeddingReranker(
+        top_n=10,  # Keep top 10 most relevant chunks for comprehensive how-to
+        model="BAAI/bge-reranker-large",
+    )
+
+    # Create query engine with structured output and reranking
     query_engine = index.as_query_engine(
+        node_postprocessors=[reranker],
         response_mode="tree_summarize",
         streaming=True,
-        similarity_top_k=20,
+        similarity_top_k=30,  # Match the retriever's top_k
     )
-    
-    # Construct a prompt that generates a structured how-to document
-    prompt = f"""Generate a comprehensive how-to guide for: {topic}
 
-Based on the conversation history, create a detailed document with the following sections:
-1. Problem Description
-2. Prerequisites (if any)
-3. Step-by-Step Solution
-4. Common Issues and Troubleshooting
-5. Additional Tips and Best Practices
+    # Construct a prompt that generates a structured how-to document
+    prompt = f"""Generate a concise how-to guide for: {topic}
+
+Based on the conversation history, create a concise document with the following sections:
+1. Common Issues and Troubleshooting
+2. Additional Tips and Best Practices
 
 Format the response in Markdown with clear headings, bullet points, and code blocks where appropriate.
-Include specific examples and solutions mentioned in the conversations.
+Include specific examples, links and solutions mentioned in the conversations.
 """
-    
+
     # Get response
     response = query_engine.query(prompt)
-    return str(response)
+
+    # Add source information with relevance scores
+    query_bundle = QueryBundle(query_str=topic)
+    nodes = retriever.retrieve(topic)
+    reranked_nodes = reranker.postprocess_nodes(nodes, query_bundle)
+
+    source_info = "\n\n## Source Conversations\nThe following conversations were used as references (with relevance scores):\n"
+    for node in reranked_nodes:
+        score = node.score if hasattr(node, "score") else "N/A"
+        if score != "N/A":
+            if score > 5:
+                relevance = "Very High Relevance"
+            elif score > 1:
+                relevance = "High Relevance"
+            elif score > 0:
+                relevance = "Moderate Relevance"
+            elif score > -1:
+                relevance = "Low Relevance"
+            else:
+                relevance = "Not Relevant"
+            source_info += f"\n- Thread {node.metadata.get('thread_ts', 'Unknown')}: Score {score:.2f} ({relevance})"
+            if node.metadata.get("date"):
+                source_info += f" - Date: {node.metadata.get('date')}"
+        else:
+            source_info += (
+                f"\n- Thread {node.metadata.get('thread_ts', 'Unknown')}: Score N/A"
+            )
+
+    return str(response) + source_info
+
 
 def main():
     """Main query interface"""
-    print("Setting up LlamaIndex...")
+    logger.info("Setting up LlamaIndex...")
     index = setup_llamaindex()
-    
+
     while True:
-        print("\nWhat would you like to do?")
-        print("1. Semantic Search")
-        print("2. Ask a Question")
-        print("3. Generate How-To Document")
-        print("4. Exit")
-        
-        choice = input("Enter your choice (1-4): ")
-        
+        logger.info("\nWhat would you like to do?")
+        logger.info("1. Semantic Search")
+        logger.info("2. Ask a Question")
+        logger.info("3. Generate How-To Document")
+        logger.info("4. Exit")
+
+        choice = input("\nEnter your choice (1-4): ")
+
         if choice == "4":
+            logger.info("Goodbye!")
             break
-        
+
         if choice == "1":
             query = input("\nEnter your search query: ")
             results = semantic_search(index, query)
-            print("\nRelevant conversations:")
+            logger.info("\nRelevant conversations:")
             for i, result in enumerate(results, 1):
-                print(f"\n--- Result {i} ---")
-                print(result)
-        
+                logger.info(f"\n--- Result {i} ---")
+                logger.info(result)
+
         elif choice == "2":
             question = input("\nEnter your question: ")
             answer = ask_question(index, question)
-            print("\nAnswer:", answer)
-        
+            logger.info("\nAnswer:")
+            logger.info(answer)
+
         elif choice == "3":
             topic = input("\nWhat topic would you like a how-to guide for? ")
-            print("\nGenerating how-to document...")
+            logger.info("\nGenerating how-to document...")
             howto = generate_howto(index, topic)
-            print("\nHow-To Guide:")
-            print(howto)
-        
+            logger.info("\nHow-To Guide:")
+            logger.info(howto)
+
         else:
-            print("Invalid choice. Please try again.")
+            logger.warning("Invalid choice. Please try again.")
+
 
 if __name__ == "__main__":
     main()
