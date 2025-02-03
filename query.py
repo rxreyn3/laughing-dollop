@@ -62,6 +62,33 @@ def ask_question(index: VectorStoreIndex, question: str) -> str:
     
     return str(response)
 
+def generate_howto(index: VectorStoreIndex, topic: str) -> str:
+    """Generate a how-to document based on conversation context"""
+    # Create query engine with structured output
+    query_engine = index.as_query_engine(
+        response_mode="tree_summarize",
+        streaming=True,
+        similarity_top_k=20,
+    )
+    
+    # Construct a prompt that generates a structured how-to document
+    prompt = f"""Generate a comprehensive how-to guide for: {topic}
+
+Based on the conversation history, create a detailed document with the following sections:
+1. Problem Description
+2. Prerequisites (if any)
+3. Step-by-Step Solution
+4. Common Issues and Troubleshooting
+5. Additional Tips and Best Practices
+
+Format the response in Markdown with clear headings, bullet points, and code blocks where appropriate.
+Include specific examples and solutions mentioned in the conversations.
+"""
+    
+    # Get response
+    response = query_engine.query(prompt)
+    return str(response)
+
 def main():
     """Main query interface"""
     print("Setting up LlamaIndex...")
@@ -71,11 +98,12 @@ def main():
         print("\nWhat would you like to do?")
         print("1. Semantic Search")
         print("2. Ask a Question")
-        print("3. Exit")
+        print("3. Generate How-To Document")
+        print("4. Exit")
         
-        choice = input("Enter your choice (1-3): ")
+        choice = input("Enter your choice (1-4): ")
         
-        if choice == "3":
+        if choice == "4":
             break
         
         if choice == "1":
@@ -89,8 +117,14 @@ def main():
         elif choice == "2":
             question = input("\nEnter your question: ")
             answer = ask_question(index, question)
-            print("\nAnswer:")
-            print(answer)
+            print("\nAnswer:", answer)
+        
+        elif choice == "3":
+            topic = input("\nWhat topic would you like a how-to guide for? ")
+            print("\nGenerating how-to document...")
+            howto = generate_howto(index, topic)
+            print("\nHow-To Guide:")
+            print(howto)
         
         else:
             print("Invalid choice. Please try again.")
