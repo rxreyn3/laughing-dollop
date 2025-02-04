@@ -143,7 +143,7 @@ class ConversationIndexer:
                     # Create user mapping for this thread
                     user_map = {}
                     for msg in thread:
-                        user_id = msg.get("user")
+                        user_id = msg.get("user", "Unknown")
                         if user_id and user_id not in user_map:
                             user_map[user_id] = f"User_{len(user_map) + 1}"
 
@@ -151,7 +151,7 @@ class ConversationIndexer:
                     content_parts = []
 
                     # First message is the conversation starter
-                    starter = user_map[thread[0].get("user")]
+                    starter = user_map[thread[0].get("user", "Unknown")]
                     content_parts.append(
                         f"{starter} started a topic with: {thread[0]['text']}"
                     )
@@ -159,7 +159,7 @@ class ConversationIndexer:
                     # Add replies
                     if len(thread) > 1:
                         for msg in thread[1:]:
-                            user = user_map[msg.get("user")]
+                            user = user_map[msg.get("user", "Unknown")]
                             content_parts.append(f"{user} replied with: {msg['text']}")
 
                     content = "\n".join(content_parts)

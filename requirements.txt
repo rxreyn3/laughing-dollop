@@ -12,7 +12,6 @@ llama-index-storage-docstore-redis
 llama-index-llms-azure-openai
 llama-index-embeddings-azure-openai
 llama-index-postprocessor-flag-embedding-reranker
-llama_index.readers.slack
 llama_index.embeddings.huggingface
 redis
 redisvl

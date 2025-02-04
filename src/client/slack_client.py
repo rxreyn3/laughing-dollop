@@ -4,7 +4,7 @@ Slack API client with rate limiting and error handling.
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any, Optional
 
 from slack_sdk import WebClient
@@ -63,7 +63,9 @@ class SlackClient:
             List of conversation threads, where each thread is a list of messages
         """
         start_ts = datetime(date.year, date.month, date.day, tzinfo=timezone.utc).timestamp()
-        end_ts = datetime(date.year, date.month, date.day + 1, tzinfo=timezone.utc).timestamp()
+        # Use timedelta to add one day instead of incrementing day directly
+        next_day = date.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        end_ts = next_day.replace(tzinfo=timezone.utc).timestamp()
 
         threads = []
         try:
