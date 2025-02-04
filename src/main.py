@@ -1,28 +1,36 @@
 """
 Main entry point for the Slack conversation indexer.
 """
+
 import argparse
 import logging
-from datetime import datetime, timedelta
+import os
 import time
+from datetime import datetime, timedelta
 
-from .config import Config
+from dotenv import load_dotenv
+
 from .client.slack_client import SlackClient
-from .storage.conversation_store import ConversationStore
-from .processor.conversation_processor import ConversationProcessor
+from .config.channel_config import ChannelConfig
+from .config.llm_config import LLMConfig
 from .indexer.conversation_indexer import ConversationIndexer
+from .processor.conversation_processor import ConversationProcessor
+from .storage.conversation_store import ConversationStore
 from .utils.logging import setup_logger
+
+load_dotenv()
 
 # Configure logging
 setup_logger()
 logger = logging.getLogger(__name__)
 
+
 def process_date_range(
-    indexer: ConversationIndexer,
-    start_date: datetime = None,
-    end_date: datetime = None,
-    force_update: bool = False,
-    channel: str = None
+        indexer: ConversationIndexer,
+        start_date: datetime = None,
+        end_date: datetime = None,
+        force_update: bool = False,
+        channel: str = None,
 ) -> None:
     """
     Process conversations within a date range.
@@ -46,16 +54,17 @@ def process_date_range(
         f"Processing conversations from {start_date.strftime('%Y-%m-%d')} "
         f"to {end_date.strftime('%Y-%m-%d')}"
     )
-    
+
     indexer.process_time_period(
         start_date,
         end_date,
         force_update=force_update,
         continuous_mode=False,
-        channel=channel
+        channel=channel,
     )
-    
+
     logger.info("Processing complete!")
+
 
 def main():
     """Main CLI interface."""
@@ -65,55 +74,46 @@ def main():
     parser.add_argument(
         "--mode",
         choices=["continuous", "date-range"],
-        default="date-range",
-        help="Processing mode",
-    )
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Force update already processed days",
+        required=True,
+        help="Operation mode: 'continuous' for monitoring or 'date-range' for batch processing",
     )
     parser.add_argument(
         "--start-date",
-        type=lambda s: datetime.strptime(s, "%Y-%m-%d"),
-        help="Start date (YYYY-MM-DD)",
+        help="Start date for date range mode (YYYY-MM-DD)",
     )
     parser.add_argument(
         "--end-date",
-        type=lambda s: datetime.strptime(s, "%Y-%m-%d"),
-        help="End date (YYYY-MM-DD)",
+        help="End date for date range mode (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--force-update",
+        action="store_true",
+        help="Force update of existing conversations",
     )
     parser.add_argument(
         "--channel",
-        help="Process specific channel ID (optional)",
+        help="Process a specific channel (channel ID)",
     )
 
     args = parser.parse_args()
 
-    # Load configuration
-    config = Config()
-    if not config.is_valid:
-        logger.error("Invalid configuration. Please check your environment variables.")
-        return
+    # Initialize configurations
+    channel_config = ChannelConfig()
+    llm_config = LLMConfig()
 
     # Initialize components
-    slack_client = SlackClient(config.slack_bot_token)
-    conversation_store = ConversationStore(config.database_url)
-    conversation_processor = ConversationProcessor(
-        redis_url=config.redis_url,
-        azure_endpoint=config.azure_endpoint,
-        azure_deployment=config.azure_deployment,
-        azure_api_key=config.azure_api_key,
-        azure_api_version=config.azure_api_version
-    )
+    slack_client = SlackClient(os.getenv("SLACK_BOT_TOKEN"))
+    conversation_store = ConversationStore()
+    conversation_processor = ConversationProcessor(llm_config=llm_config)
 
     # Create indexer
     indexer = ConversationIndexer(
         slack_client=slack_client,
         conversation_store=conversation_store,
         conversation_processor=conversation_processor,
-        monitored_channels=config.monitored_channels,
-        anonymization_salt=config.anonymization_salt
+        monitored_channels=channel_config.enabled_channel_ids,
+        anonymization_salt=os.getenv("ANONYMIZATION_SALT"),
+        channel_config=channel_config,  # Pass channel config for metadata
     )
 
     if args.mode == "continuous":
@@ -124,19 +124,25 @@ def main():
             indexer.process_time_period(
                 start_date,
                 end_date,
-                force_update=args.force,
+                force_update=args.force_update,
                 continuous_mode=True,
-                channel=args.channel
+                channel=args.channel,
             )
             time.sleep(300)  # Wait 5 minutes before next check
     else:
-        process_date_range(
-            indexer=indexer,
-            start_date=args.start_date,
-            end_date=args.end_date,
-            force_update=args.force,
-            channel=args.channel
-        )
+        if args.start_date and args.end_date:
+            start_date = datetime.strptime(args.start_date, "%Y-%m-%d")
+            end_date = datetime.strptime(args.end_date, "%Y-%m-%d")
+            process_date_range(
+                indexer=indexer,
+                start_date=start_date,
+                end_date=end_date,
+                force_update=args.force_update,
+                channel=args.channel,
+            )
+        else:
+            logger.error("Please provide both start and end dates for date range mode")
+
 
 if __name__ == "__main__":
     main()

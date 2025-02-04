@@ -1,45 +1,72 @@
 """
 SQLite-based storage for Slack conversations with change detection.
 """
+import logging
+import os
+from pathlib import Path
 from datetime import datetime, timezone
 from typing import Optional, List, Dict, Any
-import logging
 
 import blake3
-from sqlalchemy import create_engine, Column, String, DateTime, Integer, and_
+from sqlalchemy import create_engine, Column, String, DateTime, Integer, Text, Date
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker, Session
 
+from src.models.conversation import ConversationData
+
 logger = logging.getLogger(__name__)
+
+# Get project root directory (2 levels up from this file)
+PROJECT_ROOT = Path(__file__).parent.parent.parent.absolute()
+
+# Default database path in project root
+DEFAULT_DB_PATH = os.path.join(PROJECT_ROOT, "conversations.db")
+DEFAULT_DB_URL = f"sqlite:///{DEFAULT_DB_PATH}"
+
+# Get database URL from environment or use default
+DATABASE_URL = os.getenv("DATABASE_URL", DEFAULT_DB_URL)
+
 Base = declarative_base()
 
 class Conversation(Base):
-    """Model for storing conversation threads."""
-    __tablename__ = 'conversations'
+    """Model for storing conversations."""
+    __tablename__ = "conversations"
 
     thread_ts = Column(String, primary_key=True)
     channel_id = Column(String, nullable=False)
+    channel_name = Column(String, nullable=False)  # Added for readability
     content_hash = Column(String, nullable=False)
-    content = Column(String, nullable=False)
+    content = Column(Text, nullable=False)
     last_updated = Column(DateTime, nullable=False)
     participant_count = Column(Integer, nullable=False)
-    date = Column(DateTime, nullable=False)
+    date = Column(Date, nullable=False)
+
+    def __repr__(self):
+        return f"<Conversation(thread_ts={self.thread_ts}, channel={self.channel_name})>"
+
+    def to_data_model(self) -> ConversationData:
+        """Convert to ConversationData model."""
+        return ConversationData.model_validate(self)
 
 class ProcessedDay(Base):
     """Model for tracking processed days."""
-    __tablename__ = 'processed_days'
+    __tablename__ = "processed_days"
 
-    id = Column(String, primary_key=True)  # channel_id + date string
+    id = Column(String, primary_key=True)  # Composite of channel_id + date
     channel_id = Column(String, nullable=False)
-    date = Column(DateTime, nullable=False)
-    processed_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    channel_name = Column(String, nullable=False)  # Added for readability
+    date = Column(Date, nullable=False)
+    processed_at = Column(DateTime, nullable=False, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<ProcessedDay(channel={self.channel_name}, date={self.date})>"
 
 class ConversationStore:
     """
     Manages storage and retrieval of Slack conversations in SQLite.
     """
 
-    def __init__(self, database_url: str = "sqlite:///conversations.db"):
+    def __init__(self, database_url: str = DATABASE_URL):
         """
         Initialize the conversation store.
 
@@ -103,6 +130,7 @@ class ConversationStore:
         processed_day = ProcessedDay(
             id=day_id,
             channel_id=channel_id,
+            channel_name="",  # Added for readability
             date=date,
             processed_at=datetime.now(timezone.utc)
         )
@@ -117,47 +145,37 @@ class ConversationStore:
     def store_conversation(
         self,
         session: Session,
-        thread_ts: str,
-        channel_id: str,
-        content: str,
-        participant_count: int,
-        date: datetime
+        conversation: ConversationData
     ) -> bool:
         """
         Store or update a conversation in the database.
 
         Args:
             session: Database session
-            thread_ts: Thread timestamp
-            channel_id: Channel ID
-            content: Conversation content
-            participant_count: Number of participants
-            date: Conversation date
+            conversation: ConversationData instance containing conversation data
 
         Returns:
             True if the conversation was updated, False if unchanged
         """
-        content_hash = self._compute_content_hash(content)
+        content_hash = self._compute_content_hash(conversation.content)
         
         existing = session.query(Conversation).filter(
-            Conversation.thread_ts == thread_ts
+            Conversation.thread_ts == conversation.thread_ts
         ).first()
 
         if existing and existing.content_hash == content_hash:
             return False
 
-        conversation = Conversation(
-            thread_ts=thread_ts,
-            channel_id=channel_id,
-            content_hash=content_hash,
-            content=content,
-            last_updated=datetime.now(timezone.utc),
-            participant_count=participant_count,
-            date=date
-        )
+        # Add computed fields
+        conversation.content_hash = content_hash
+        conversation.last_updated = datetime.now(timezone.utc)
+
+        # Convert to dict for SQLAlchemy
+        conversation_dict = conversation.model_dump()
+        conversation_model = Conversation(**conversation_dict)
 
         try:
-            session.merge(conversation)
+            session.merge(conversation_model)
             session.commit()
             return True
         except Exception as e:
@@ -171,7 +189,7 @@ class ConversationStore:
         start_date: Optional[datetime] = None,
         end_date: Optional[datetime] = None,
         channel_id: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
+    ) -> List[ConversationData]:
         """
         Retrieve conversations within a date range.
 
@@ -182,7 +200,7 @@ class ConversationStore:
             channel_id: Optional channel ID to filter by
 
         Returns:
-            List of conversation dictionaries
+            List of ConversationData instances
         """
         query = session.query(Conversation)
 
@@ -193,15 +211,4 @@ class ConversationStore:
         if channel_id:
             query = query.filter(Conversation.channel_id == channel_id)
 
-        conversations = query.all()
-        return [
-            {
-                "thread_ts": conv.thread_ts,
-                "channel_id": conv.channel_id,
-                "content": conv.content,
-                "participant_count": conv.participant_count,
-                "date": conv.date.isoformat(),
-                "last_updated": conv.last_updated.isoformat()
-            }
-            for conv in conversations
-        ]
+        return [conversation.to_data_model() for conversation in query.all()]

@@ -98,20 +98,95 @@ The system is built using modern Python best practices and consists of several k
 
 ## Usage
 
+The system provides three main interfaces:
+
+1. **Data Ingestion**: Process and index Slack conversations
+2. **Query Interface**: Search and retrieve conversation context
+3. **Continuous Monitoring**: Real-time conversation tracking
+
 ### Initial Data Load
+Process historical conversations within a date range:
 ```bash
-python ingest_and_index.py --mode date-range --start-date YYYY-MM-DD --end-date YYYY-MM-DD
+python -m src.main --mode date-range --start-date YYYY-MM-DD --end-date YYYY-MM-DD
 ```
 
 ### Channel-Specific Processing
+Process conversations from specific channels:
 ```bash
-python ingest_and_index.py --mode date-range --channel CHANNEL_ID
+python -m src.main --mode date-range --channel CHANNEL_ID
 ```
 
 ### Continuous Monitoring
+Monitor and process new conversations in real-time:
 ```bash
-python ingest_and_index.py --mode continuous [--channel CHANNEL_ID]
+python -m src.main --mode continuous [--channel CHANNEL_ID]
 ```
+
+### Query Interface
+Search and retrieve conversation context using natural language:
+```bash
+python query.py "Your question about Slack conversations"
+```
+
+### Configuration
+
+#### Environment Variables
+
+The system uses environment variables for configuration. Create a `.env` file with:
+
+```env
+# Slack Configuration
+SLACK_BOT_TOKEN=xoxb-your-token-here
+SLACK_APP_TOKEN=xapp-your-token-here
+
+# Azure OpenAI Configuration
+AZURE_OPENAI_API_KEY=your-key-here
+AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_EMBEDDING_DEPLOYMENT=your-ada-002-deployment
+AZURE_OPENAI_LLM_DEPLOYMENT=your-gpt-35-turbo-deployment
+
+# Optional: API version for Azure OpenAI services
+AZURE_EMBEDDING_API_VERSION=2023-05-15
+AZURE_LLM_API_VERSION=2023-05-15
+
+# Redis Configuration
+REDIS_HOST=localhost
+REDIS_PORT=6379
+REDIS_PASSWORD=  # if required
+
+# Required: Salt for anonymization of users
+ANONYMIZATION_SALT=xxx
+```
+
+#### Channel Configuration
+
+The system uses a YAML file to define which Slack channels to monitor. Create a `config/channels.yaml` file:
+
+```yaml
+channels:
+  - id: "CHANNEL_ID"        # Slack channel ID
+    name: "channel-name"    # Channel name for readability
+    description: "Purpose"  # Channel description
+    enabled: true          # Whether to monitor this channel
+
+  # Example:
+  - id: "C03ADA66PN3"
+    name: "hopper-support"
+    description: "General Hopper support channel"
+    enabled: true
+```
+
+Each channel entry requires:
+- `id`: Slack channel ID (get this from the channel URL or settings)
+- `name`: Human-readable channel name
+- `description`: Brief description of the channel's purpose
+- `enabled`: Boolean flag to enable/disable monitoring (default: true)
+
+The channel information is used for:
+1. Determining which channels to monitor
+2. Adding readable metadata to indexed conversations
+3. Improving search results with channel context
+4. Making logs and database queries more human-readable
 
 ## Development
 
@@ -120,24 +195,21 @@ python ingest_and_index.py --mode continuous [--channel CHANNEL_ID]
 laughing-dollop/
 ├── src/
 │   ├── client/
-│   │   └── slack_client.py
+│   │   └── slack_client.py         # Slack API client with rate limiting
+│   ├── config/
+│   │   └── llm_config.py          # LLM and vector store configuration
 │   ├── storage/
-│   │   └── conversation_store.py
+│   │   └── conversation_store.py   # SQLite-based conversation storage
 │   ├── processor/
-│   │   └── conversation_processor.py
+│   │   └── conversation_processor.py # Conversation vectorization
 │   ├── indexer/
-│   │   └── conversation_indexer.py
-│   ├── config.py
-│   └── main.py
+│   │   └── conversation_indexer.py # Indexing orchestration
+│   ├── utils/
+│   │   └── logging.py             # Logging utilities
+│   ├── config.py                  # Application configuration
+│   └── main.py                    # Main entry point
 ├── tests/
-├── config.py
-├── llama_config.py
-├── log_config.py
-├── query.py
-├── slack_bot.py
-├── slack_conversation_indexer.py
-├── vectorize_conversations.py
-├── ingest_and_index.py
+├── query.py                       # Query interface for RAG
 ├── requirements.txt
 ├── docker-compose.yml
 └── Dockerfile

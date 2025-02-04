@@ -1,0 +1,35 @@
+channels:
+  - id: "C03ADA66PN3"
+    name: "hopper-support"
+    description: "General Hopper support channel"
+    enabled: true
+
+  - id: "C04LQGAPZMM"
+    name: "hopper-support-art"
+    description: "Art-specific support channel"
+    enabled: true
+
+  - id: "C048RTD4ZMW"
+    name: "hopper-design-support"
+    description: "Design support channel"
+    enabled: true
+
+  - id: "C06ACKTF0BV"
+    name: "virtuos-support"
+    description: "Virtuos support channel"
+    enabled: true
+
+  - id: "C061MH3FUN9"
+    name: "hopper-xdev-tech"
+    description: "Cross-development technical support"
+    enabled: true
+
+  - id: "G01MLU1GHQW"
+    name: "hopper-tech"
+    description: "Technical support channel"
+    enabled: false
+
+  - id: "C04PSAK2Z8X"
+    name: "hopper-audio-tech"
+    description: "Audio technical support"
+    enabled: false

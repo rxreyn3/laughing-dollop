@@ -1,228 +1,202 @@
 """
-Slack API client with robust rate limiting and error handling.
+Slack API client with rate limiting and error handling.
 """
-from datetime import datetime, timedelta
-from typing import Dict, Any, Optional, List
 import logging
+import os
 import time
+from datetime import datetime, timezone
+from typing import List, Dict, Any, Optional
 
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
 logger = logging.getLogger(__name__)
 
+
 class SlackClient:
     """
-    A wrapper around the Slack Web API client that handles rate limiting and retries.
+    Slack API client with rate limiting and error handling.
     """
 
-    def __init__(self, token: str, max_retries: int = 3, initial_retry_delay: float = 1.0):
+    def __init__(self, token: Optional[str] = None):
         """
-        Initialize the Slack client.
+        Initialize Slack client.
 
         Args:
-            token: Slack API token
-            max_retries: Maximum number of retries for failed API calls
-            initial_retry_delay: Initial delay between retries in seconds
+            token: Slack API token. If not provided, uses SLACK_BOT_TOKEN env var.
         """
+        if token is None:
+            token = os.environ.get("SLACK_BOT_TOKEN")
+        if not token:
+            raise ValueError("Must specify token or set SLACK_BOT_TOKEN env var")
+
         self.client = WebClient(token=token)
-        self.max_retries = max_retries
-        self.initial_retry_delay = initial_retry_delay
+        self._validate_auth()
 
-    def make_api_call(
-        self,
-        method_name: str,
-        **kwargs
-    ) -> Dict[str, Any]:
-        """
-        Make a Slack API call with retry logic for rate limits.
-
-        Args:
-            method_name: Name of the Slack API method to call
-            **kwargs: Arguments to pass to the API method
-
-        Returns:
-            The API response
-
-        Raises:
-            SlackApiError: If all retries fail
-        """
-        method = getattr(self.client, method_name)
-        last_exception = None
-        retry_delay = self.initial_retry_delay
-
-        for attempt in range(self.max_retries + 1):
-            try:
-                response = method(**kwargs)
-                
-                if not response["ok"]:
-                    error = response.get("error", "unknown_error")
-                    if error == "ratelimited":
-                        # Get retry_after from headers or use default
-                        retry_after = float(response.get("headers", {}).get("Retry-After", 60))
-                        logger.warning(f"Rate limited. Waiting {retry_after} seconds...")
-                        time.sleep(retry_after)
-                        continue
-                    
-                    raise SlackApiError(f"Slack API returned error: {error}", response)
-                
-                return response
-
-            except SlackApiError as e:
-                last_exception = e
-                if attempt < self.max_retries:
-                    retry_after = None
-                    
-                    # Check for Retry-After header
-                    if hasattr(e.response, 'headers') and 'Retry-After' in e.response.headers:
-                        retry_after = float(e.response.headers['Retry-After'])
-                        logger.warning(f"Rate limited. Waiting {retry_after} seconds as specified by Slack...")
-                    elif "ratelimited" in str(e):
-                        # If no header but we know it's rate limited, use exponential backoff
-                        retry_after = retry_delay
-                        retry_delay *= 2
-                        logger.warning(f"Rate limited without Retry-After header. Using backoff: {retry_after} seconds...")
-                    
-                    if retry_after:
-                        time.sleep(retry_after)
-                        continue
-                    
-                    logger.error(f"API call failed (attempt {attempt + 1}/{self.max_retries + 1}): {str(e)}")
-                    raise last_exception
-
-            except Exception as e:
-                logger.error(f"Unexpected error in API call: {str(e)}")
-                raise
-
-    def get_conversation_replies(
-        self,
-        channel: str,
-        ts: str,
-        oldest: Optional[str] = None,
-        latest: Optional[str] = None,
-        limit: int = 100
-    ) -> List[Dict[str, Any]]:
-        """
-        Get all replies in a conversation thread.
-
-        Args:
-            channel: Channel ID
-            ts: Thread timestamp
-            oldest: Start of time range
-            latest: End of time range
-            limit: Maximum number of messages to return
-
-        Returns:
-            List of message objects
-        """
+    def _validate_auth(self) -> None:
+        """Validate authentication token."""
         try:
-            result = self.make_api_call(
-                "conversations_replies",
-                channel=channel,
-                ts=ts,
-                oldest=oldest,
-                latest=latest,
-                limit=limit
-            )
-            return result["messages"]
-        except Exception as e:
-            logger.error(f"Error getting conversation replies: {str(e)}")
+            result = self.client.api_test()
+            if not result["ok"]:
+                raise ValueError(f"Error initializing Slack API: {result['error']}")
+        except SlackApiError as e:
+            raise ValueError(f"Error initializing Slack API: {str(e)}")
+
+    def _handle_rate_limit(self, e: SlackApiError) -> None:
+        """Handle rate limiting by waiting the specified time."""
+        if e.response["error"] == "ratelimited":
+            retry_after = int(e.response.headers.get("retry-after", "1"))
+            logger.warning(f"Rate limited. Waiting {retry_after} seconds...")
+            time.sleep(retry_after)
+        else:
             raise
 
-    def get_conversations(
-        self,
-        channel: str,
-        oldest: Optional[str] = None,
-        latest: Optional[str] = None,
-        limit: int = 100
-    ) -> List[Dict[str, Any]]:
+    def get_conversation_threads(self, channel_id: str, date: datetime) -> List[List[Dict[str, Any]]]:
         """
-        Get conversations from a channel.
+        Get all conversation threads from a channel for a specific date.
 
         Args:
-            channel: Channel ID
-            oldest: Start of time range
-            latest: End of time range
-            limit: Maximum number of conversations to return
+            channel_id: Channel ID to get conversations from
+            date: Date to get conversations for
 
         Returns:
-            List of conversation objects
+            List of conversation threads, where each thread is a list of messages
         """
+        start_ts = datetime(date.year, date.month, date.day, tzinfo=timezone.utc).timestamp()
+        end_ts = datetime(date.year, date.month, date.day + 1, tzinfo=timezone.utc).timestamp()
+
+        threads = []
         try:
-            result = self.make_api_call(
-                "conversations_history",
-                channel=channel,
-                oldest=oldest,
-                latest=latest,
-                limit=limit
-            )
-            return result["messages"]
+            # Get all messages for the day
+            while True:
+                try:
+                    result = self.client.conversations_history(
+                        channel=channel_id,
+                        oldest=str(start_ts),
+                        latest=str(end_ts)
+                    )
+                    messages = result["messages"]
+
+                    # Process each thread
+                    for message in messages:
+                        if message.get("thread_ts"):  # Only process threads
+                            thread = self._get_thread_replies(channel_id, message["thread_ts"])
+                            if thread:
+                                threads.append(thread)
+
+                    if not result["has_more"]:
+                        break
+
+                except SlackApiError as e:
+                    self._handle_rate_limit(e)
+                    continue
+
         except Exception as e:
             logger.error(f"Error getting conversations: {str(e)}")
             raise
+
+        return threads
+
+    def _get_thread_replies(self, channel_id: str, thread_ts: str) -> Optional[List[Dict[str, Any]]]:
+        """
+        Get all replies in a thread.
+
+        Args:
+            channel_id: Channel ID
+            thread_ts: Thread timestamp
+
+        Returns:
+            List of messages in the thread, or None if error
+        """
+        try:
+            while True:
+                try:
+                    result = self.client.conversations_replies(
+                        channel=channel_id,
+                        ts=thread_ts
+                    )
+                    return result["messages"]
+
+                except SlackApiError as e:
+                    self._handle_rate_limit(e)
+                    continue
+
+        except Exception as e:
+            logger.error(f"Error getting thread replies: {str(e)}")
+            return None
+
+    def get_user_info(self, user_id: str) -> Optional[Dict[str, Any]]:
+        """
+        Get information about a user.
+
+        Args:
+            user_id: User ID to get info for
+
+        Returns:
+            User information dictionary or None if error
+        """
+        try:
+            while True:
+                try:
+                    result = self.client.users_info(user=user_id)
+                    return result["user"]
+
+                except SlackApiError as e:
+                    self._handle_rate_limit(e)
+                    continue
+
+        except Exception as e:
+            logger.error(f"Error getting user info: {str(e)}")
+            return None
 
 def main():
     """
     Development testing function.
     
-    Usage:
+    Example usage:
         python -m src.client.slack_client
     """
-    import os
-    from dotenv import load_dotenv
-    import json
+    import sys
     from datetime import datetime, timedelta
 
-    # Load environment variables
-    load_dotenv()
-    token = os.getenv("SLACK_BOT_TOKEN")
-    if not token:
-        print("Error: SLACK_BOT_TOKEN not found in environment")
-        return
-
     # Initialize client
-    client = SlackClient(token)
-
-    # Test conversation fetching
-    channel = input("Enter channel ID to test (or press Enter for general): ") or "C04P5JNKP"
-    days_ago = int(input("Enter number of days to look back (default: 7): ") or "7")
-
-    # Calculate timestamps
-    end_ts = datetime.now()
-    start_ts = end_ts - timedelta(days=days_ago)
-
-    print(f"\nFetching conversations from {start_ts.date()} to {end_ts.date()}...")
-    
     try:
-        # Get conversations
-        messages = client.get_conversations(
-            channel=channel,
-            oldest=str(start_ts.timestamp()),
-            latest=str(end_ts.timestamp())
-        )
+        client = SlackClient()
+    except ValueError as e:
+        print(f"Error: {e}")
+        print("Please set the SLACK_BOT_TOKEN environment variable")
+        sys.exit(1)
 
-        print(f"\nFound {len(messages)} messages")
+    # Get channel ID from command line or use default
+    channel_id = sys.argv[1] if len(sys.argv) > 1 else "C03ADA66PN3"  # hopper-support channel
+    
+    # Get threads from yesterday
+    yesterday = datetime.now() - timedelta(days=1)
+    try:
+        threads = client.get_conversation_threads(channel_id, yesterday)
+        print(f"\nFound {len(threads)} threads from {yesterday.strftime('%Y-%m-%d')} in channel {channel_id}")
         
-        # Process each thread
-        thread_count = 0
-        for msg in messages:
-            if msg.get("thread_ts"):
-                thread_count += 1
-                print(f"\nThread {thread_count}:")
-                thread = client.get_conversation_replies(
-                    channel=channel,
-                    ts=msg["thread_ts"]
-                )
-                print(json.dumps(thread[:2], indent=2))  # Show first 2 messages of thread
-                if len(thread) > 2:
-                    print(f"... and {len(thread)-2} more messages")
-
-        print(f"\nSummary:")
-        print(f"Total messages: {len(messages)}")
-        print(f"Total threads: {thread_count}")
+        # Print thread info
+        for i, thread in enumerate(threads, 1):
+            parent = thread[0]  # First message is parent
+            replies = thread[1:] if len(thread) > 1 else []
+            
+            print(f"\nThread {i}:")
+            print(f"  Parent: {parent.get('text', '').split()[0]}...")
+            print(f"  Replies: {len(replies)}")
+            print(f"  Participants: {len({msg.get('user') for msg in thread})}")
+            print(f"  Time: {datetime.fromtimestamp(float(parent['ts'])).strftime('%Y-%m-%d %H:%M:%S')}")
+            
+            # Get some user info
+            if parent.get('user'):
+                user = client.get_user_info(parent['user'])
+                if user:
+                    print(f"  Posted by: {user.get('real_name', 'Unknown')}")
 
     except Exception as e:
-        print(f"Error: {str(e)}")
+        print(f"Error: {e}")
+        sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
