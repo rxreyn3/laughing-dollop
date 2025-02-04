@@ -11,12 +11,10 @@ from .client.slack_client import SlackClient
 from .storage.conversation_store import ConversationStore
 from .processor.conversation_processor import ConversationProcessor
 from .indexer.conversation_indexer import ConversationIndexer
+from .utils.logging import setup_logger
 
 # Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+setup_logger()
 logger = logging.getLogger(__name__)
 
 def process_date_range(

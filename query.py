@@ -6,7 +6,7 @@ from llama_index.postprocessor.flag_embedding_reranker import (
     FlagEmbeddingReranker,
 )
 
-import llama_config as config
+from src.config.llm_config import LLMConfig
 from log_config import setup_logger
 from dataclasses import dataclass
 from typing import Any, Optional
@@ -19,12 +19,12 @@ def setup_llamaindex():
     """Configure LlamaIndex with Azure OpenAI and Redis"""
     # Initialize models
     logger.info("Initializing LlamaIndex components...")
-    embed_model = config.get_embedding_model()
-    llm = config.get_llm_model()
+    embed_model = LLMConfig.get_embedding_model()
+    llm = LLMConfig.get_llm_model()
 
     # Set up stores
-    vector_store = config.get_vector_store()
-    docstore = config.get_document_store()
+    vector_store = LLMConfig.get_vector_store()
+    docstore = LLMConfig.get_document_store()
 
     # Configure global settings
     Settings.embed_model = embed_model

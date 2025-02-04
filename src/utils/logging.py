@@ -1,11 +1,14 @@
-"""Logging configuration for the application."""
+"""
+Logging utilities for the application.
+"""
 import logging
 import sys
+from typing import Optional
 
 import colorlog
 
 
-def setup_logger(name: str = None) -> logging.Logger:
+def setup_logger(name: Optional[str] = None) -> logging.Logger:
     """
     Set up a colored logger instance.
     
@@ -23,16 +26,15 @@ def setup_logger(name: str = None) -> logging.Logger:
     handler = colorlog.StreamHandler(sys.stdout)
     handler.setFormatter(
         colorlog.ColoredFormatter(
-            "%(log_color)s%(asctime)s %(levelname)-8s%(reset)s %(blue)s%(name)s%(reset)s %(message)s",
+            "%(log_color)s%(asctime)s - %(name)s - %(levelname)s - %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
-            reset=True,
             log_colors={
-                'DEBUG':    'cyan',
-                'INFO':     'green',
-                'WARNING': 'yellow',
-                'ERROR':   'red',
-                'CRITICAL': 'red,bg_white',
-            }
+                "DEBUG": "cyan",
+                "INFO": "green",
+                "WARNING": "yellow",
+                "ERROR": "red",
+                "CRITICAL": "red,bg_white",
+            },
         )
     )
     
