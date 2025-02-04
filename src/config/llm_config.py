@@ -5,6 +5,7 @@ Configuration for LLM and vector store components.
 import os
 
 from dotenv import load_dotenv
+from llama_index.core import Settings
 from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
 from llama_index.llms.azure_openai import AzureOpenAI
 from llama_index.storage.docstore.redis import RedisDocumentStore
@@ -23,7 +24,8 @@ class LLMConfig:
 
         # Azure OpenAI Configuration
         self.api_key = os.getenv("AZURE_OPENAI_API_KEY")
-        self.api_version = os.getenv("AZURE_EMBEDDING_API_VERSION")
+        self.llm_api_version = os.getenv("AZURE_LLM_API_VERSION")
+        self.embedding_api_version = os.getenv("AZURE_EMBEDDING_API_VERSION")
         self.azure_endpoint = os.getenv("AZURE_OPENAI_ENDPOINT")
         self.embedding_deployment = os.getenv("AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
         self.llm_deployment = os.getenv("AZURE_OPENAI_LLM_DEPLOYMENT")
@@ -41,25 +43,30 @@ class LLMConfig:
             decode_responses=False,  # Required for vector store binary data
         )
 
+        Settings.embed_model = self.get_embedding_model()
+        Settings.llm = self.get_llm_model()
+
     def get_embedding_model(self) -> AzureOpenAIEmbedding:
         """Get Azure OpenAI embedding model."""
-        return AzureOpenAIEmbedding(
+        Settings.embed_model = AzureOpenAIEmbedding(
             model=self.embedding_deployment,
             deployment_name=self.embedding_deployment,
             api_key=self.api_key,
             azure_endpoint=self.azure_endpoint,
-            api_version=self.api_version,
+            api_version=self.embedding_api_version,
         )
+        return Settings.embed_model
 
     def get_llm_model(self) -> AzureOpenAI:
         """Get Azure OpenAI LLM model."""
-        return AzureOpenAI(
-            model=self.llm_deployment,
+        Settings.llm = AzureOpenAI(
+            model="gpt-4o",
             deployment_name=self.llm_deployment,
             api_key=self.api_key,
             azure_endpoint=self.azure_endpoint,
-            api_version=self.api_version,
+            api_version=self.llm_api_version,
         )
+        return Settings.llm
 
     def get_redis_schema(self) -> IndexSchema:
         """Get Redis schema for vector store."""
@@ -103,7 +110,7 @@ class LLMConfig:
         return RedisVectorStore(
             redis_client=self.redis_client,
             schema=self.get_redis_schema(),
-            overwrite=True,
+            overwrite=False,
         )
 
     def get_document_store(self) -> RedisDocumentStore:

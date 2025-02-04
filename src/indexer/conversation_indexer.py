@@ -276,8 +276,8 @@ class ConversationIndexer:
                 session, start_date=start_date, end_date=end_date, channel_id=channel
             )
 
-            if conversations:
-                logger.info(f"Vectorizing {len(conversations)} conversations...")
-                self.conversation_processor.process_conversations(conversations)
+            for conversation in conversations:
+                logger.info(f"Vectorizing {len(conversation.thread_ts)} conversation...")
+                self.conversation_processor.process_conversation(conversation)
             else:
                 logger.info("No new conversations to vectorize")
