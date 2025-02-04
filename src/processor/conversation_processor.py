@@ -87,7 +87,8 @@ class ConversationProcessor:
                     "channel_name": conversation.channel_name,
                     "date": conversation.date.isoformat(),
                     "participant_count": conversation.participant_count,
-                }
+                },
+                doc_id=f"{conversation.channel_id}_{conversation.thread_ts}"  # Use channel_id and thread_ts as unique identifier
             )
 
             # Process the document through pipeline

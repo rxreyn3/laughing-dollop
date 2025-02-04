@@ -29,7 +29,7 @@ class ConversationIndexer:
         conversation_store: ConversationStore,
         conversation_processor: ConversationProcessor,
         monitored_channels: List[str],
-        anonymization_salt: str,
+        anonymization_salt: str,  # Kept for backward compatibility
         channel_config: ChannelConfig,
     ):
         """
@@ -40,58 +40,14 @@ class ConversationIndexer:
             conversation_store: Initialized ConversationStore
             conversation_processor: Initialized ConversationProcessor
             monitored_channels: List of channel IDs to monitor
-            anonymization_salt: Salt for user ID anonymization
+            anonymization_salt: Not used anymore, kept for backward compatibility
             channel_config: Channel configuration
         """
         self.slack_client = slack_client
         self.conversation_store = conversation_store
         self.conversation_processor = conversation_processor
         self.monitored_channels = monitored_channels
-        self.anonymization_salt = anonymization_salt
         self.channel_config = channel_config
-        self._user_id_map: Dict[str, str] = {}
-        self._anonymization_salt = anonymization_salt or slack_client.token
-
-    def _anonymize_user_id(self, user_id: str) -> str:
-        """
-        Create a consistent anonymous identifier for a user ID.
-
-        Args:
-            user_id: Original user ID
-
-        Returns:
-            Anonymized user identifier
-        """
-        if user_id not in self._user_id_map:
-            # Create a salted hash of the user ID
-            hasher = hashlib.sha256()
-            hasher.update(f"{self._anonymization_salt}:{user_id}".encode())
-            # Use first 8 characters of hash for the anonymous ID
-            self._user_id_map[user_id] = f"User_{hasher.hexdigest()[:8]}"
-
-        return self._user_id_map[user_id]
-
-    def _process_message_text(self, text: str, user_mentions: List[str]) -> str:
-        """
-        Process message text to anonymize any user mentions.
-
-        Args:
-            text: Original message text
-            user_mentions: List of user IDs mentioned in the text
-
-        Returns:
-            Processed text with anonymized user mentions
-        """
-        processed_text = text
-        for user_id in user_mentions:
-            # Replace both <@USER_ID> and raw USER_ID with anonymized version
-            processed_text = processed_text.replace(
-                f"<@{user_id}>", self._anonymize_user_id(user_id)
-            )
-            processed_text = processed_text.replace(
-                user_id, self._anonymize_user_id(user_id)
-            )
-        return processed_text
 
     def _prepare_conversation_metadata(
         self, conversation: Dict[str, Any]
@@ -157,17 +113,21 @@ class ConversationIndexer:
             channel = self.channel_config.get_channel_by_id(channel_id)
             if not channel:
                 raise ValueError(f"Channel {channel_id} not found in config")
-            
+
             if not channel.enabled:
                 logger.info(f"Skipping disabled channel: {channel_id}")
                 return 0
 
-            logger.info(f"Processing channel: {channel.name} ({channel_id}) for {date.strftime('%Y-%m-%d')}")
+            logger.info(
+                f"Processing channel: {channel.name} ({channel_id}) for {date.strftime('%Y-%m-%d')}"
+            )
 
             # Get all threads for the day
             threads = self.slack_client.get_conversation_threads(channel_id, date)
             if not threads:
-                logger.info(f"No threads found in {channel.name} for {date.strftime('%Y-%m-%d')}")
+                logger.info(
+                    f"No threads found in {channel.name} for {date.strftime('%Y-%m-%d')}"
+                )
                 self.conversation_store.mark_day_processed(session, channel_id, date)
                 return 0
 
@@ -175,23 +135,40 @@ class ConversationIndexer:
             try:
                 for thread in threads:
                     message = thread[0]  # First message is the parent
+                    thread_ts = message["thread_ts"]
 
-                    # Get thread messages and process text
-                    content = "\n".join(
-                        self._process_message_text(
-                            msg["text"], msg.get("user_mentions", [])
-                        )
-                        for msg in thread
-                    )
+                    # Create user mapping for this thread
+                    user_map = {}
+                    for msg in thread:
+                        user_id = msg.get("user")
+                        if user_id and user_id not in user_map:
+                            user_map[user_id] = f"User_{len(user_map) + 1}"
+
+                    # Build conversation content in LLM-friendly format
+                    content_parts = []
+                    
+                    # First message is the conversation starter
+                    starter = user_map[thread[0].get("user")]
+                    content_parts.append(f"{starter} started a topic with: {thread[0]['text']}")
+                    
+                    # Add replies
+                    if len(thread) > 1:
+                        for msg in thread[1:]:
+                            user = user_map[msg.get("user")]
+                            content_parts.append(f"{user} replied with: {msg['text']}")
+                    
+                    content = "\n".join(content_parts)
 
                     # Create conversation data
                     conversation = ConversationData(
-                        thread_ts=message["thread_ts"],
+                        thread_ts=thread_ts,
                         channel_id=channel_id,
                         channel_name=channel.name,
                         content=content,
-                        participant_count=len({msg.get("user") for msg in thread}),
+                        participant_count=len(user_map),
                         date=datetime.fromtimestamp(float(message["ts"])),
+                        last_updated=datetime.now(),
+                        content_hash=None  # Will be computed by conversation store
                     )
 
                     self.process_conversation(conversation)
