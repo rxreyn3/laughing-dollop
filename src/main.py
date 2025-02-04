@@ -112,7 +112,6 @@ def main():
         conversation_store=conversation_store,
         conversation_processor=conversation_processor,
         monitored_channels=channel_config.enabled_channel_ids,
-        anonymization_salt=os.getenv("ANONYMIZATION_SALT"),
         channel_config=channel_config,  # Pass channel config for metadata
     )
 

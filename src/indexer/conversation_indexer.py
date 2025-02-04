@@ -29,7 +29,6 @@ class ConversationIndexer:
         conversation_store: ConversationStore,
         conversation_processor: ConversationProcessor,
         monitored_channels: List[str],
-        anonymization_salt: str,  # Kept for backward compatibility
         channel_config: ChannelConfig,
     ):
         """
@@ -40,7 +39,6 @@ class ConversationIndexer:
             conversation_store: Initialized ConversationStore
             conversation_processor: Initialized ConversationProcessor
             monitored_channels: List of channel IDs to monitor
-            anonymization_salt: Not used anymore, kept for backward compatibility
             channel_config: Channel configuration
         """
         self.slack_client = slack_client
@@ -128,7 +126,12 @@ class ConversationIndexer:
                 logger.info(
                     f"No threads found in {channel.name} for {date.strftime('%Y-%m-%d')}"
                 )
-                self.conversation_store.mark_day_processed(session, channel_id, date)
+                self.conversation_store.mark_day_processed(
+                    session,
+                    channel_id,
+                    date,
+                    channel_name=channel.name,  # Pass channel name from config
+                )
                 return 0
 
             processed_count = 0
@@ -146,17 +149,19 @@ class ConversationIndexer:
 
                     # Build conversation content in LLM-friendly format
                     content_parts = []
-                    
+
                     # First message is the conversation starter
                     starter = user_map[thread[0].get("user")]
-                    content_parts.append(f"{starter} started a topic with: {thread[0]['text']}")
-                    
+                    content_parts.append(
+                        f"{starter} started a topic with: {thread[0]['text']}"
+                    )
+
                     # Add replies
                     if len(thread) > 1:
                         for msg in thread[1:]:
                             user = user_map[msg.get("user")]
                             content_parts.append(f"{user} replied with: {msg['text']}")
-                    
+
                     content = "\n".join(content_parts)
 
                     # Create conversation data
@@ -168,14 +173,19 @@ class ConversationIndexer:
                         participant_count=len(user_map),
                         date=datetime.fromtimestamp(float(message["ts"])),
                         last_updated=datetime.now(),
-                        content_hash=None  # Will be computed by conversation store
+                        content_hash=None,  # Will be computed by conversation store
                     )
 
                     self.process_conversation(conversation)
                     processed_count += 1
 
                 # Mark day as processed only if all threads were processed successfully
-                self.conversation_store.mark_day_processed(session, channel_id, date)
+                self.conversation_store.mark_day_processed(
+                    session,
+                    channel_id,
+                    date,
+                    channel_name=channel.name,  # Pass channel name from config
+                )
                 logger.info(
                     f"Successfully processed {processed_count} threads from {channel.name} "
                     f"for {date.strftime('%Y-%m-%d')}"

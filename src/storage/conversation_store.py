@@ -117,7 +117,13 @@ class ConversationStore:
         day_id = self._create_day_id(channel_id, date)
         return session.query(ProcessedDay).filter(ProcessedDay.id == day_id).first() is not None
 
-    def mark_day_processed(self, session: Session, channel_id: str, date: datetime) -> None:
+    def mark_day_processed(
+        self, 
+        session: Session, 
+        channel_id: str, 
+        date: datetime,
+        channel_name: str
+    ) -> None:
         """
         Mark a day as processed for a channel.
 
@@ -125,12 +131,13 @@ class ConversationStore:
             session: Database session
             channel_id: Channel ID
             date: Date to mark as processed
+            channel_name: Name of the channel for readability
         """
         day_id = self._create_day_id(channel_id, date)
         processed_day = ProcessedDay(
             id=day_id,
             channel_id=channel_id,
-            channel_name="",  # Added for readability
+            channel_name=channel_name,  # Use provided channel name
             date=date,
             processed_at=datetime.now(timezone.utc)
         )
