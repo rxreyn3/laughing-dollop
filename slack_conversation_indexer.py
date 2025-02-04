@@ -1,20 +1,13 @@
 import os
 import time
-from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from datetime import datetime, timedelta, timezone
+from typing import Optional, Dict, Any, Callable
 
 import blake3
 from dotenv import load_dotenv
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
-from sqlalchemy import (
-    create_engine,
-    Column,
-    String,
-    DateTime,
-    Text,
-    Integer,
-)
+from sqlalchemy import create_engine, Column, String, DateTime, Text, Integer
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
 from log_config import setup_logger
@@ -58,49 +51,82 @@ class ProcessedDay(Base):
     id = Column(String, primary_key=True)  # channel_id + date string
     channel_id = Column(String, nullable=False)
     date = Column(DateTime, nullable=False)
-    processed_at = Column(DateTime, nullable=False, default=datetime.utcnow)
-
-
-Session = sessionmaker(bind=engine)
-
-
-def compute_content_hash(content: str) -> str:
-    """Generate a deterministic hash of the conversation content."""
-    return blake3.blake3(content.encode()).hexdigest()
+    processed_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 def make_api_call_with_retry(
-    func, max_retries: int = 3, initial_delay: float = 1.0, *args, **kwargs
+        func: Callable,
+        max_retries: int = 3,
+        initial_retry_delay: float = 1.0,
+        *args,
+        **kwargs
 ) -> Dict[str, Any]:
     """
-    Make an API call with exponential backoff retry logic for rate limits.
+    Make a Slack API call with retry logic for rate limits.
 
     Args:
-        func: The API function to call
+        func: The Slack API function to call
         max_retries: Maximum number of retries
-        initial_delay: Initial delay between retries in seconds
+        initial_retry_delay: Initial delay between retries in seconds
         *args: Positional arguments for the API function
         **kwargs: Keyword arguments for the API function
 
     Returns:
         The API response
-    """
-    delay = initial_delay
-    last_exception = None
 
-    for attempt in range(max_retries):
+    Raises:
+        SlackApiError: If all retries fail
+    """
+    last_exception = None
+    retry_delay = initial_retry_delay
+
+    for attempt in range(max_retries + 1):
         try:
-            return func(*args, **kwargs)
+            response = func(*args, **kwargs)
+
+            if not response["ok"]:
+                error = response.get("error", "unknown_error")
+                if error == "ratelimited":
+                    # Get retry_after from headers or use default
+                    retry_after = float(response.get("headers", {}).get("Retry-After", 60))
+                    logger.warning(f"Rate limited. Waiting {retry_after} seconds...")
+                    time.sleep(retry_after)
+                    continue
+
+                raise SlackApiError(f"Slack API returned error: {error}", response)
+
+            return response
+
         except SlackApiError as e:
             last_exception = e
-            if e.response["error"] == "ratelimited":
-                logger.warning(f"Rate limited. Waiting {delay} seconds...")
-                time.sleep(delay)
-                delay *= 2  # Exponential backoff
-            else:
-                raise
+            if attempt < max_retries:
+                retry_after = None
 
-    raise last_exception
+                # Check for Retry-After header
+                if hasattr(e.response, 'headers') and 'Retry-After' in e.response.headers:
+                    retry_after = float(e.response.headers['Retry-After'])
+                    logger.warning(f"Rate limited. Waiting {retry_after} seconds as specified by Slack...")
+                elif "ratelimited" in str(e):
+                    # If no header but we know it's rate limited, use exponential backoff
+                    retry_after = retry_delay
+                    retry_delay *= 2
+                    logger.warning(f"Rate limited without Retry-After header. Using backoff: {retry_after} seconds...")
+
+                if retry_after:
+                    time.sleep(retry_after)
+                    continue
+
+                logger.error(f"API call failed (attempt {attempt + 1}/{max_retries + 1}): {str(e)}")
+                raise last_exception
+
+        except Exception as e:
+            logger.error(f"Unexpected error in API call: {str(e)}")
+            raise
+
+
+def compute_content_hash(content: str) -> str:
+    """Generate a deterministic hash of the conversation content."""
+    return blake3.blake3(content.encode()).hexdigest()
 
 
 def fetch_thread_messages(channel_id: str, thread_ts: str) -> Optional[Dict[str, Any]]:
@@ -254,9 +280,8 @@ def mark_day_processed(session, channel_id: str, date: datetime) -> None:
         id=day_id,
         channel_id=channel_id,
         date=date,
-        processed_at=datetime.utcnow(),
-    )
-    
+        processed_at=datetime.now(timezone.utc))
+
     try:
         # Try to merge (update if exists, insert if not)
         session.merge(processed_day)
@@ -343,3 +368,27 @@ def process_channel_for_date(session, channel_id: str, date: datetime) -> None:
         logger.error(f"Error processing channel {channel_id} for date {date}: {e}")
         session.rollback()
         raise
+
+
+Session = sessionmaker(bind=engine)
+
+
+def main():
+    """Main function to process Slack conversations."""
+
+    session = Session()
+
+    channel_id = 'C061MH3FUN9'
+    # Define the date to process (e.g., today)
+    date_to_process = datetime(2024, 11, 29)
+
+    print(f"Processing channel {channel_id} for date {date_to_process.strftime('%Y-%m-%d')}")
+    process_channel_for_date(session, channel_id, date_to_process)
+
+    # Close the session
+    session.close()
+    print("Processing complete.")
+
+
+if __name__ == "__main__":
+    main()

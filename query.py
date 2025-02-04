@@ -8,6 +8,8 @@ from llama_index.postprocessor.flag_embedding_reranker import (
 
 import llama_config as config
 from log_config import setup_logger
+from dataclasses import dataclass
+from typing import Any, Optional
 
 # Set up logger
 logger = setup_logger(__name__)
@@ -106,7 +108,15 @@ def semantic_search(index: VectorStoreIndex, query: str, top_k: int = 3) -> List
     return results
 
 
-def ask_question(index: VectorStoreIndex, question: str) -> str:
+@dataclass
+class QueryResponse:
+    """Response from the query engine with source information."""
+    response: str
+    source_nodes: List[Any]
+    error: Optional[str] = None
+
+
+def ask_question(index: VectorStoreIndex, question: str) -> QueryResponse:
     """
     Ask a question and get an answer based on the conversation context.
     
@@ -115,56 +125,47 @@ def ask_question(index: VectorStoreIndex, question: str) -> str:
         question: The question to answer
         
     Returns:
-        Generated answer
+        QueryResponse object containing the answer and source nodes
     """
-    logger.info(f"Processing question: {question}")
-    
-    # Create reranker
-    reranker = FlagEmbeddingReranker(
-        top_n=5,  # Keep top 5 most relevant chunks for context
-        model="BAAI/bge-reranker-large",
-    )
+    try:
+        logger.info(f"Processing question: {question}")
+        
+        # Create reranker
+        logger.debug("Initializing reranker...")
+        reranker = FlagEmbeddingReranker(
+            top_n=5,  # Keep top 5 most relevant chunks for context
+            model="BAAI/bge-reranker-large",
+        )
 
-    # Create query engine with reranked nodes
-    query_engine = index.as_query_engine(
-        node_postprocessors=[reranker],
-        response_mode="compact",
-        streaming=True,
-        similarity_top_k=20,  # Get more candidates for reranking
-    )
+        # Create query engine with reranked nodes
+        logger.debug("Setting up query engine...")
+        query_engine = index.as_query_engine(
+            node_postprocessors=[reranker],
+            response_mode="compact",
+            streaming=True,
+            similarity_top_k=20,  # Get more candidates for reranking
+        )
 
-    # Get response
-    response = query_engine.query(question)
+        # Get response
+        logger.debug("Executing query...")
+        response = query_engine.query(question)
+        
+        # Get source nodes from the response
+        source_nodes = getattr(response, 'source_nodes', [])
+        logger.info(f"Query complete. Found {len(source_nodes)} relevant sources.")
+        
+        return QueryResponse(
+            response=str(response),
+            source_nodes=source_nodes
+        )
 
-    # Add source information with relevance scores
-    source_info = "\n\nSources (with relevance scores):\n"
-
-    # Get the nodes used in generating the response
-    retriever = index.as_retriever(similarity_top_k=20)
-    query_bundle = QueryBundle(query_str=question)
-    nodes = retriever.retrieve(question)
-    reranked_nodes = reranker.postprocess_nodes(nodes, query_bundle)
-
-    for node in reranked_nodes:
-        score = node.score if hasattr(node, "score") else "N/A"
-        if score != "N/A":
-            if score > 5:
-                relevance = "Very High Relevance"
-            elif score > 1:
-                relevance = "High Relevance"
-            elif score > 0:
-                relevance = "Moderate Relevance"
-            elif score > -1:
-                relevance = "Low Relevance"
-            else:
-                relevance = "Not Relevant"
-            source_info += f"\n- Thread {node.metadata.get('thread_ts', 'Unknown')}: Score {score:.2f} ({relevance})"
-        else:
-            source_info += (
-                f"\n- Thread {node.metadata.get('thread_ts', 'Unknown')}: Score N/A"
-            )
-
-    return str(response) + source_info
+    except Exception as e:
+        logger.error(f"Error in ask_question: {str(e)}", exc_info=True)
+        return QueryResponse(
+            response="I encountered an error while processing your question. Please try again later.",
+            source_nodes=[],
+            error=str(e)
+        )
 
 
 def generate_howto(index: VectorStoreIndex, topic: str) -> str:
@@ -273,7 +274,11 @@ def main():
             question = input("\nEnter your question: ")
             answer = ask_question(index, question)
             logger.info("\nAnswer:")
-            logger.info(answer)
+            logger.info(answer.response)
+            logger.info("\nSource nodes:")
+            for i, node in enumerate(answer.source_nodes, 1):
+                logger.info(f"\n--- Source {i} ---")
+                logger.info(node.text)
 
         elif choice == "3":
             topic = input("\nWhat topic would you like a how-to guide for? ")

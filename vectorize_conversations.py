@@ -1,5 +1,6 @@
 from datetime import datetime
-from typing import List
+from typing import List, Optional
+from sqlalchemy.orm import Session
 
 from dotenv import load_dotenv
 from llama_index.core import Document
@@ -27,8 +28,22 @@ def get_db_connection():
     return engine.connect()
 
 
-def fetch_conversations(start_date=None, end_date=None) -> List[Document]:
-    """Fetch conversations from SQLite and convert them to Documents for a specific date range"""
+def fetch_conversations(
+    start_date: datetime,
+    end_date: datetime,
+    channel: Optional[str] = None
+) -> List[Document]:
+    """
+    Fetch conversations from the database within the given date range.
+
+    Args:
+        start_date: Start date to fetch from
+        end_date: End date to fetch to
+        channel: Optional channel ID to filter by. If None, fetch from all channels.
+
+    Returns:
+        List of Document objects containing conversation content
+    """
     conn = get_db_connection()
 
     # Base query
@@ -42,6 +57,10 @@ def fetch_conversations(start_date=None, end_date=None) -> List[Document]:
     if start_date and end_date:
         query += " AND date >= :start_date AND date < :end_date"
 
+    # Add channel filter if provided
+    if channel:
+        query += " AND channel_id = :channel"
+
     # Execute query with parameters
     result = conn.execute(
         text(query),
@@ -49,9 +68,17 @@ def fetch_conversations(start_date=None, end_date=None) -> List[Document]:
             {
                 "start_date": start_date.strftime("%Y-%m-%d"),
                 "end_date": end_date.strftime("%Y-%m-%d"),
+                "channel": channel,
             }
-            if start_date and end_date
-            else {}
+            if start_date and end_date and channel
+            else (
+                {
+                    "start_date": start_date.strftime("%Y-%m-%d"),
+                    "end_date": end_date.strftime("%Y-%m-%d"),
+                }
+                if start_date and end_date
+                else {}
+            )
         ),
     )
 

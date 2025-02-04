@@ -13,3 +13,4 @@ llama-index-embeddings-azure-openai
 llama-index-postprocessor-flag-embedding-reranker
 redis
 colorlog
+slack-bolt

@@ -27,24 +27,29 @@ Session = sessionmaker(bind=engine)
 
 
 def process_time_period(
-        start_date: datetime, end_date: datetime, force_update: bool = False, continuous_mode: bool = False
+    start_date: datetime,
+    end_date: datetime,
+    force_update: bool = False,
+    continuous_mode: bool = False,
+    channel: Optional[str] = None,
 ) -> None:
     """
     Process conversations for a given time period.
 
     Args:
-        start_date: Start of the time period to process
-        end_date: End of the time period to process
-        force_update: Whether to force update existing conversations
-        continuous_mode: Whether running in continuous monitoring mode
+        start_date: Start date to process from
+        end_date: End date to process to
+        force_update: Whether to force update already processed days
+        continuous_mode: Whether to run in continuous mode (always process)
+        channel: Optional channel ID to process. If None, process all configured channels
     """
-    logger.info(
-        f"Processing period: {start_date.strftime('%Y-%m-%d %H:%M')} to {end_date.strftime('%Y-%m-%d %H:%M')}"
-    )
-
     # Step 1: Ingest conversations from Slack
     logger.info("\nStep 1: Ingesting conversations from Slack...")
-    for channel_id in MONITORED_CHANNELS:
+
+    # Use specified channel or all monitored channels
+    channels_to_process = [channel] if channel else MONITORED_CHANNELS
+
+    for channel_id in channels_to_process:
         logger.info(f"Processing channel: {channel_id}")
         processed_count = 0
         skipped_count = 0
@@ -52,26 +57,34 @@ def process_time_period(
         while current_date < end_date:
             with Session() as session:
                 should_process = (
-                        continuous_mode  # Always process in continuous mode
-                        or force_update  # Process if force update is requested
-                        or not is_day_processed(session, channel_id, current_date)  # Process if not already done
+                    continuous_mode  # Always process in continuous mode
+                    or force_update  # Process if force update is requested
+                    or not is_day_processed(
+                        session, channel_id, current_date
+                    )  # Process if not already done
                 )
                 if should_process:
-                    logger.debug(f"Processing date: {current_date.strftime('%Y-%m-%d')}")
+                    logger.debug(
+                        f"Processing date: {current_date.strftime('%Y-%m-%d')}"
+                    )
                     process_channel_for_date(session, channel_id, current_date)
                     processed_count += 1
                 else:
                     skipped_count += 1
-                    logger.debug(f"Skipping date: {current_date.strftime('%Y-%m-%d')} (already processed)")
+                    logger.debug(
+                        f"Skipping date: {current_date.strftime('%Y-%m-%d')} (already processed)"
+                    )
             current_date += timedelta(days=1)
 
         # Only show skipped count in date-range mode
         if continuous_mode:
-            logger.info(f"Channel {channel_id} summary: processed {processed_count} days")
+            logger.info(
+                f"Channel {channel_id} summary: processed {processed_count} days"
+            )
         else:
             logger.info(
                 f"Channel {channel_id} summary: processed {processed_count} days, "
-                f"skipped {skipped_count} days (already processed)"
+                f"skipped {skipped_count} days"
             )
 
     # Step 2: Vectorize conversations
@@ -79,11 +92,12 @@ def process_time_period(
     logger.info("Setting up ingestion pipeline...")
     pipeline = vc.setup_ingestion_pipeline()
 
-    logger.info(f"Fetching conversations from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}...")
-    documents = vc.fetch_conversations(start_date, end_date)
+    logger.info(
+        f"Fetching conversations from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}..."
+    )
+    documents = vc.fetch_conversations(start_date, end_date, channel)
     if documents:
-        logger.info(f"Found {len(documents)} conversations to vectorize")
-        logger.info("Starting vectorization process...")
+        logger.info(f"Vectorizing {len(documents)} conversations...")
         nodes = pipeline.run(documents=documents)
         logger.info(
             f"Vectorization complete: {len(nodes)} nodes created "
@@ -94,67 +108,39 @@ def process_time_period(
 
 
 def process_date_range(
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
-        force_update: bool = False,
-        interactive: bool = True,
+    start_date: Optional[datetime] = None,
+    end_date: Optional[datetime] = None,
+    force_update: bool = False,
+    channel: Optional[str] = None,
 ) -> None:
     """
-    Process conversations within a date range, optionally prompting for each month.
+    Process conversations within a date range.
 
     Args:
-        start_date: Start date of the range to process. If None, uses earliest date in DB.
-        end_date: End date of the range to process. If None, uses latest date in DB.
-        force_update: Whether to force update existing conversations
-        interactive: Whether to prompt before processing each month
+        start_date: Start date (default: 1 month ago)
+        end_date: End date (default: now)
+        force_update: Whether to force update already processed days
+        channel: Optional channel ID to process. If None, process all configured channels
     """
-    # If no dates provided, get them from the database
-    if not start_date or not end_date:
-        db_start, db_end = vc.get_date_range()
-        if not db_start or not db_end:
-            logger.error("No conversations found in the database!")
-            return
+    if not start_date:
+        start_date = datetime.now() - timedelta(days=30)
+    if not end_date:
+        end_date = datetime.now()
 
-        start_date = start_date or db_start
-        end_date = end_date or db_end
+    start_date = start_date.replace(hour=0, minute=0, second=0, microsecond=0)
+    end_date = end_date.replace(hour=0, minute=0, second=0, microsecond=0)
 
     logger.info(
-        f"\nProcessing range: {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
+        f"Processing conversations from {start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')}"
     )
-
-    # Start from the beginning of the month
-    current_date = datetime(start_date.year, start_date.month, 1)
-
-    while current_date <= end_date:
-        # Calculate end of current month
-        _, last_day = calendar.monthrange(current_date.year, current_date.month)
-        month_end = datetime(
-            current_date.year, current_date.month, last_day
-        ) + timedelta(days=1)
-
-        # Don't go beyond the end date
-        month_end = min(month_end, end_date)
-
-        # Process the current month
-        process_time_period(current_date, month_end, force_update=force_update, continuous_mode=False)
-
-        if current_date < end_date and interactive:
-            while True:
-                response = input(
-                    "\nWould you like to process the next month? (y/n): "
-                ).lower()
-                if response in ["y", "n"]:
-                    break
-                logger.warning("Please enter 'y' for yes or 'n' for no.")
-
-            if response == "n":
-                logger.info("Exiting as requested.")
-                break
-
-        # Move to next month
-        current_date = month_end
-
-    logger.info("\nProcessing complete!")
+    process_time_period(
+        start_date,
+        end_date,
+        force_update=force_update,
+        continuous_mode=False,
+        channel=channel,
+    )
+    logger.info("Processing complete!")
 
 
 def continuous_monitor(update_interval: int = 300) -> None:
@@ -201,54 +187,58 @@ def continuous_monitor(update_interval: int = 300) -> None:
 
 
 def main():
-    """Main entry point with command line argument parsing"""
+    """Main CLI interface."""
     parser = argparse.ArgumentParser(
-        description="Slack Conversation Ingestion and Indexing"
+        description="Process and index Slack conversations."
     )
     parser.add_argument(
         "--mode",
-        choices=["date-range", "continuous"],
-        required=True,
-        help="Operation mode: date-range or continuous",
-    )
-    parser.add_argument(
-        "--start-date",
-        help="Start date for processing (YYYY-MM-DD)",
-        type=lambda s: datetime.strptime(s, "%Y-%m-%d"),
-    )
-    parser.add_argument(
-        "--end-date",
-        help="End date for processing (YYYY-MM-DD)",
-        type=lambda s: datetime.strptime(s, "%Y-%m-%d"),
+        choices=["continuous", "date-range"],
+        default="date-range",
+        help="Processing mode",
     )
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Force update existing conversations",
+        help="Force update already processed days",
     )
     parser.add_argument(
-        "--non-interactive",
-        action="store_true",
-        help="Run without prompting for each month",
+        "--start-date",
+        type=lambda s: datetime.strptime(s, "%Y-%m-%d"),
+        help="Start date (YYYY-MM-DD)",
     )
     parser.add_argument(
-        "--update-interval",
-        type=int,
-        default=300,
-        help="Update interval in seconds for continuous mode",
+        "--end-date",
+        type=lambda s: datetime.strptime(s, "%Y-%m-%d"),
+        help="End date (YYYY-MM-DD)",
+    )
+    parser.add_argument(
+        "--channel",
+        help="Process specific channel ID (optional)",
     )
 
     args = parser.parse_args()
 
-    if args.mode == "date-range":
+    if args.mode == "continuous":
+        logger.info("Starting continuous monitoring...")
+        while True:
+            end_date = datetime.now()
+            start_date = end_date - timedelta(days=1)
+            process_time_period(
+                start_date,
+                end_date,
+                force_update=args.force,
+                continuous_mode=True,
+                channel=args.channel,
+            )
+            time.sleep(300)  # Wait 5 minutes before next check
+    else:
         process_date_range(
             start_date=args.start_date,
             end_date=args.end_date,
             force_update=args.force,
-            interactive=not args.non_interactive,
+            channel=args.channel,
         )
-    else:  # continuous mode
-        continuous_monitor(update_interval=args.update_interval)
 
 
 if __name__ == "__main__":
