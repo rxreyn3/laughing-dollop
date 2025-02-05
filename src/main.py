@@ -10,19 +10,17 @@ from datetime import datetime, timedelta
 
 from dotenv import load_dotenv
 
-from .client.slack_client import SlackClient
-from .config.channel_config import ChannelConfig
-from .config.llm_config import LLMConfig
-from .indexer.conversation_indexer import ConversationIndexer
-from .processor.conversation_processor import ConversationProcessor
-from .storage.conversation_store import ConversationStore
-from .utils.logging import setup_logger
+from src.utils.logger import setup_logger
 
 load_dotenv()
 
 # Configure logging
 setup_logger()
 logger = logging.getLogger(__name__)
+
+
+class ConversationIndexer:
+    pass
 
 
 def process_date_range(
@@ -64,6 +62,30 @@ def process_date_range(
     )
 
     logger.info("Processing complete!")
+
+
+class ConversationIndexer:
+    pass
+
+
+class ConversationProcessor:
+    pass
+
+
+class ConversationStore:
+    pass
+
+
+class SlackClient:
+    pass
+
+
+class LLMConfig:
+    pass
+
+
+class ChannelConfig:
+    pass
 
 
 def main():
