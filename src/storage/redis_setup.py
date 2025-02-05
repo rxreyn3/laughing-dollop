@@ -6,7 +6,7 @@ from llama_index.storage.kvstore.redis import RedisKVStore
 from llama_index.vector_stores.redis import RedisVectorStore
 from redisvl.schema import IndexSchema
 
-from src.models.config import RedisConfig
+from src.models.schemas import RedisConfig
 from src.utils.config import load_app_config
 from src.utils.logger import logger
 

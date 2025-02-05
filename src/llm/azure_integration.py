@@ -4,7 +4,7 @@ from llama_index.core import Settings
 from llama_index.embeddings.azure_openai import AzureOpenAIEmbedding
 from llama_index.llms.azure_openai import AzureOpenAI
 
-from src.models.config import AzureOpenAIConfig
+from src.models.schemas import AzureOpenAIConfig
 from src.utils.config import load_app_config
 from src.utils.logger import logger
 
